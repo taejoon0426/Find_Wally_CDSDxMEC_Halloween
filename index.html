@@ -28,17 +28,6 @@
     @media (max-width: 860px) {
       main { grid-template-columns: 1fr; }
     }
-
-    /* 업로더 */
-    .uploader { margin-top: 8px; }
-    #dropzone {
-      border:1px dashed #2a2a2a; border-radius:12px; padding:16px;
-      text-align:center; background:#0f0f0f;
-    }
-    #dropzone.dragover { border-color:#3b82f6; background:#121212; }
-    .preview { margin-top:10px; }
-    .preview img { max-width:100%; border-radius:12px; display:block; }
-    .hidden { display:none; }
   </style>
 </head>
 <body>
@@ -51,8 +40,8 @@
     <section class="card">
       <div id="webcam-container"></div>
       <div class="controls">
-        <button id="startBtn">Start Webcam</button>
-        <button id="stopBtn" disabled>Stop Webcam</button>
+        <button id="startBtn">Start Camera</button>
+        <button id="stopBtn" disabled>Stop Camera</button>
         <button id="switchCamBtn">Switch Camera</button>
       </div>
       <div class="hint">Use HTTPS (or localhost) so the browser allows webcam access.</div>
@@ -61,26 +50,8 @@
     <!-- 확률 표시 카드 -->
     <section class="card">
       <h2 style="margin:0 0 8px 0;font-size:16px;">Live Probabilities</h2>
-      <div id="label">Waiting for webcam...</div>
+      <div id="label">Waiting for camera...</div>
       <div class="probs" id="probs"></div>
-    </section>
-
-    <!-- 업로드 / 드래그앤드롭 카드 -->
-    <section class="card">
-      <h2 style="margin:0 0 8px 0;font-size:16px;">Upload or Drag & Drop</h2>
-
-      <div class="uploader">
-        <div id="dropzone">
-          <p style="margin:0;">Drop an image here, or</p>
-          <button id="pickBtn" type="button" style="margin-top:8px;">Choose Image</button>
-          <input id="fileInput" type="file" accept="image/*" style="display:none;" />
-        </div>
-        <div id="preview" class="preview hidden">
-          <img id="previewImg" alt="preview" />
-        </div>
-      </div>
-
-      <div class="hint">Drag & drop a photo (Wally / non-Wally). Uploading pauses the webcam loop; press “Start Webcam” to resume.</div>
     </section>
   </main>
 
@@ -92,17 +63,12 @@
 
   <script>
     // ====== Config ======
-    const MODEL_URL = "./model/"; // GitHub Pages에선 index.html과 같은 경로의 model/ 폴더 사용
+    const MODEL_URL = "./model/"; // index.html과 같은 경로의 model/ 폴더
 
     // ====== State ======
     let model, webcam, maxPredictions, labels = [];
     let animId = null;
-
-    // 전면/후면 카메라 상태 (기본 전면)
     let facingMode = localStorage.getItem("facingMode") || "user"; // "user" | "environment"
-
-    // 업로드 시 루프 일시정지 플래그
-    let pausedForUpload = false;
 
     // ====== Elements ======
     const startBtn = document.getElementById("startBtn");
@@ -110,11 +76,6 @@
     const switchCamBtn = document.getElementById("switchCamBtn");
     const probsEl = document.getElementById("probs");
     const labelEl = document.getElementById("label");
-    const fileInput = document.getElementById("fileInput");
-    const pickBtn = document.getElementById("pickBtn");
-    const dropzone = document.getElementById("dropzone");
-    const preview = document.getElementById("preview");
-    const previewImg = document.getElementById("previewImg");
 
     // ====== Model ======
     async function loadModel() {
@@ -149,11 +110,23 @@
       pct.textContent = w.toFixed(2) + "%";
     }
 
+    // ====== (iOS 안정성) deviceId 백업 탐색 ======
+    async function getDeviceIdForMode(target = "environment") {
+      try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === "videoinput");
+      const keywords = target === "environment"
+        ? [/back/i, /rear/i, /environment/i]
+        : [/front/i, /user/i, /face/i];
+      const byLabel = cams.find(c => keywords.some(rx => rx.test(c.label)));
+      return byLabel?.deviceId || cams[0]?.deviceId || null;
+    }
+
     // ====== Webcam ======
     async function initWebcam() {
       await loadModel();
 
-      // 기존 webcam 정리
+      // 기존 정리
       if (animId) cancelAnimationFrame(animId);
       animId = null;
       if (webcam) {
@@ -161,11 +134,18 @@
         webcam = null;
       }
 
-      // 전면은 mirror(true), 후면은 mirror(false)로 사용자 경험 개선
-      const flip = (facingMode === "user");
-
+      const flip = (facingMode === "user"); // 전면은 미러링
       webcam = new tmImage.Webcam(400, 300, flip);
-      await webcam.setup({ facingMode }); // "user" = 전면, "environment" = 후면
+
+      // 기본: facingMode로 시도, 실패하면 deviceId로 재시도
+      try {
+        await webcam.setup({ facingMode });
+      } catch (e) {
+        const id = await getDeviceIdForMode(facingMode);
+        if (!id) throw e;
+        await webcam.setup({ deviceId: { exact: id } });
+      }
+
       await webcam.play();
 
       const cont = document.getElementById("webcam-container");
@@ -203,77 +183,11 @@
       }
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      labelEl.textContent = "Webcam stopped.";
-    }
-
-    // ====== Upload / Drag & Drop ======
-    function pauseLoopIfRunning() {
-      if (animId) {
-        cancelAnimationFrame(animId);
-        animId = null;
-        pausedForUpload = true;
-      }
-    }
-    function resumeLoopIfPaused() {
-      if (pausedForUpload && webcam) {
-        pausedForUpload = false;
-        window.requestAnimationFrame(loop);
-      }
-    }
-
-    pickBtn?.addEventListener("click", () => fileInput.click());
-    fileInput?.addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
-      if (file) await handleImageFile(file);
-    });
-
-    ["dragenter","dragover"].forEach(evt =>
-      dropzone?.addEventListener(evt, (e) => {
-        e.preventDefault(); e.stopPropagation();
-        dropzone.classList.add("dragover");
-      })
-    );
-    ["dragleave","drop"].forEach(evt =>
-      dropzone?.addEventListener(evt, (e) => {
-        e.preventDefault(); e.stopPropagation();
-        dropzone.classList.remove("dragover");
-      })
-    );
-    dropzone?.addEventListener("drop", async (e) => {
-      const file = e.dataTransfer.files?.[0];
-      if (file) await handleImageFile(file);
-    });
-
-    async function handleImageFile(file) {
-      try {
-        await loadModel();
-        pauseLoopIfRunning();
-
-        const url = URL.createObjectURL(file);
-        previewImg.src = url;
-        preview.classList.remove("hidden");
-
-        await new Promise((res, rej) => {
-          previewImg.onload = res;
-          previewImg.onerror = rej;
-        });
-
-        const preds = await model.predict(previewImg);
-        preds.forEach((p, i) => setRow(i, p.probability));
-
-        const best = preds.reduce((a, b) => (a.probability > b.probability ? a : b));
-        labelEl.textContent = "Top (uploaded): " + best.className + " (" + (best.probability*100).toFixed(2) + "%)";
-      } catch (err) {
-        console.error(err);
-        labelEl.textContent = "Upload failed. Try another image.";
-      }
+      labelEl.textContent = "Camera stopped.";
     }
 
     // ====== Events ======
-    startBtn.addEventListener("click", async () => {
-      await initWebcam();
-      resumeLoopIfPaused();
-    });
+    startBtn.addEventListener("click", initWebcam);
     stopBtn.addEventListener("click", stopWebcam);
 
     switchCamBtn?.addEventListener("click", async () => {
@@ -283,10 +197,6 @@
       labelEl.textContent = `Switching to ${facingMode === "user" ? "Front" : "Back"} Camera...`;
       await initWebcam();
     });
-
-    // 페이지 로드시 자동 초기화는 사용자가 Start 누르도록 두는 게 안전 (모바일 권한 팝업)
-    // 필요하면 아래 주석 해제:
-    // window.addEventListener("DOMContentLoaded", () => { /* no auto-start */ });
   </script>
 </body>
 </html>
