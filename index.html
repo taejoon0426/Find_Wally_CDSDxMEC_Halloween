@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Find Wally with AI — [CDSD x MEC]</title>
+  <title>Find Wally — Image Detection [CDSD x MEC]</title>
   <style>
     :root{
       --bg:#0b0b0b; --fg:#eaeaea; --muted:#9aa0a6; --accent:#ff4d4f;
@@ -13,7 +13,7 @@
     }
     *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
     html,body{ margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
-    
+
     /* ===== Header ===== */
     header{
       position:sticky; top:0; z-index:5;
@@ -23,12 +23,8 @@
       backdrop-filter:saturate(120%) blur(6px);
       border-bottom:1px solid var(--border);
     }
-    header img{
-      width:40px; height:40px; border-radius:8px; object-fit:cover;
-    }
-    header h1{
-      margin:0; font-size:17px; font-weight:800; letter-spacing:.2px;
-    }
+    header img{ width:40px; height:40px; border-radius:8px; object-fit:cover; }
+    header h1{ margin:0; font-size:17px; font-weight:800; letter-spacing:.2px; }
 
     /* ===== Layout ===== */
     main{ padding: 10px 12px 96px; }
@@ -42,23 +38,20 @@
       background:rgba(0,0,0,.55);
       padding:6px 10px; border-radius:999px;
       font-size:12px; color:#e5e7eb; border:1px solid #000;
+      display:none; /* 카메라 켜진 뒤에만 보이게 */
     }
     canvas{
       width:100%;
-      aspect-ratio: 3/4;       /* 세로형 비율로 조정 */
+      aspect-ratio: 1 / 1;   /* ✅ 정사각형 비율 */
       border-radius:14px;
       background:#000;
-      max-height: 75dvh;       /* 모바일에서 세로 화면 꽉 차게 */
-      object-fit: cover;
+      max-height: 75dvh;
     }
 
     /* ===== Status / Prob ===== */
     .statusLine{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
     .label{ color:var(--muted); font-size:13px; }
-    .topBadge{
-      font-weight:800; font-size:14px; padding:6px 10px; border-radius:999px;
-      border:1px solid #333; background:#151515;
-    }
+    .topBadge{ font-weight:800; font-size:14px; padding:6px 10px; border-radius:999px; border:1px solid #333; background:#151515; }
     .probs{ display:flex; flex-direction:column; gap:8px; }
     .row{ display:grid; grid-template-columns: 120px 1fr auto; gap:8px; align-items:center; }
     .name{ color:#d1d5db; font-weight:700; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -69,8 +62,7 @@
     /* ===== Controls ===== */
     .controls{
       position:fixed; left:0; right:0; bottom:0; z-index:10;
-      background:rgba(15,15,15,.92);
-      backdrop-filter:saturate(120%) blur(8px);
+      background:rgba(15,15,15,.92); backdrop-filter:saturate(120%) blur(8px);
       border-top:1px solid var(--border);
       padding:10px 12px calc(10px + var(--safe-bottom));
     }
@@ -92,21 +84,21 @@
       main{ max-width:980px; margin:0 auto; }
       .stack{ flex-direction:row; }
       .stack>.card{ flex:1; }
-      canvas{ aspect-ratio:4/3; max-height:65dvh; }
+      canvas{ aspect-ratio: 1 / 1; max-height: 65dvh; } /* 데스크톱에서도 정사각형 유지 */
     }
   </style>
 </head>
 <body>
   <header>
-    <img src="cdsd_logo.png" alt="CDSD Logo" /> <!-- 로고 이미지 (정사각형) -->
-    <h1>Find Wally with AI — [CDSD x MEC]</h1>
+    <img src="cdsd_logo.png" alt="CDSD Logo" />
+    <h1>Find Wally — Image Detection [CDSD x MEC]</h1>
   </header>
 
   <main>
     <div class="stack">
       <!-- 카메라 카드 -->
       <section class="card cameraWrap">
-        <div class="cameraHint">Tip: Fill the frame with only WALLY</div>
+        <div class="cameraHint" id="cameraHint">Tip: Fill the frame with only WALLY</div>
         <div id="webcam-container"></div>
         <div class="statusLine" style="margin-top:10px;">
           <div class="label" id="label">Waiting for camera...</div>
@@ -122,34 +114,43 @@
     </div>
   </main>
 
+  <!-- 하단 고정 컨트롤 -->
   <div class="controls">
     <div class="controlsInner">
       <button id="startBtn" class="accent">Start</button>
       <button id="stopBtn" class="danger" disabled>Stop</button>
       <button id="switchCamBtn" class="switch">Switch</button>
     </div>
-    <div class="label" style="margin-top:6px;">NOTICE: If you allowed camera access, please tap the "Start" button again</div>
+    <div class="label" style="margin-top:6px;">NOTICE: Camera permission may take up to ~1 min on some phones. Try HTTPS.</div>
   </div>
 
   <footer>Powered by TensorFlow.js + Teachable Machine</footer>
 
+  <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
+
   <script>
+    // ===== Config =====
     const MODEL_URL = "./model/";
-    const SUCCESS_THRESHOLD = 0.8;
+    const SUCCESS_THRESHOLD = 0.8; // 80%
+
+    // ===== State =====
     let model, webcam, maxPredictions, labels = [];
     let animId = null;
-    let facingMode = localStorage.getItem("facingMode") || "user";
+    let facingMode = localStorage.getItem("facingMode") || "user"; // "user" | "environment"
     let wakeLock = null;
 
+    // ===== Elements =====
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const switchCamBtn = document.getElementById("switchCamBtn");
     const probsEl = document.getElementById("probs");
     const labelEl = document.getElementById("label");
     const topBadgeEl = document.getElementById("topBadge");
+    const cameraHintEl = document.getElementById("cameraHint");
 
+    // ===== Model =====
     async function loadModel(){
       if(model) return;
       model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
@@ -158,67 +159,84 @@
       renderRows(labels);
     }
 
+    // ===== UI: Prob Rows =====
     function renderRows(names){
-      probsEl.innerHTML="";
+      probsEl.innerHTML = "";
       for(const n of names){
-        const row=document.createElement("div");
-        row.className="row";
-        row.innerHTML=`
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = `
           <div class="name">${n}</div>
           <div class="bar"><div></div></div>
           <div class="pct">0.00%</div>`;
         probsEl.appendChild(row);
       }
     }
-    function setRow(idx,p){
-      const row=probsEl.children[idx];
+    function setRow(idx, p){
+      const row = probsEl.children[idx];
       if(!row) return;
-      const bar=row.querySelector(".bar > div");
-      const pct=row.querySelector(".pct");
-      const w=Math.round(p*10000)/100;
-      bar.style.width=w+"%";
-      pct.textContent=w.toFixed(2)+"%";
+      const bar = row.querySelector(".bar > div");
+      const pct = row.querySelector(".pct");
+      const w = Math.round(p * 10000) / 100;
+      bar.style.width = w + "%";
+      pct.textContent = w.toFixed(2) + "%";
     }
 
+    // ===== Helpers =====
     function vibrateOk(){ if("vibrate" in navigator) navigator.vibrate?.(30); }
     async function requestWakeLock(){
       try{
         if("wakeLock" in navigator){
           wakeLock = await navigator.wakeLock.request("screen");
-          wakeLock.addEventListener?.("release",()=>wakeLock=null);
+          wakeLock.addEventListener?.("release", ()=>{ wakeLock = null; });
         }
       }catch(e){}
     }
-
     async function getDeviceIdForMode(target="environment"){
-      try{ await navigator.mediaDevices.getUserMedia({video:true}); }catch{}
-      const devices=await navigator.mediaDevices.enumerateDevices();
-      const cams=devices.filter(d=>d.kind==="videoinput");
-      const keywords=target==="environment"?[/back/i,/rear/i,/environment/i]:[/front/i,/user/i,/face/i];
-      const byLabel=cams.find(c=>keywords.some(rx=>rx.test(c.label)));
-      return byLabel?.deviceId||cams[0]?.deviceId||null;
+      try{ await navigator.mediaDevices.getUserMedia({ video:true }); }catch{}
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === "videoinput");
+      const keywords = target === "environment" ? [/back/i,/rear/i,/environment/i] : [/front/i,/user/i,/face/i];
+      const byLabel = cams.find(c => keywords.some(rx => rx.test(c.label)));
+      return byLabel?.deviceId || cams[0]?.deviceId || null;
     }
 
+    // ===== Webcam =====
     async function initWebcam(){
       await loadModel();
-      if(animId) cancelAnimationFrame(animId);
-      animId=null;
-      if(webcam){ try{webcam.stop();}catch(e){} webcam=null; }
 
-      const flip=(facingMode==="user");
-      webcam=new tmImage.Webcam(480,640,flip); // 세로형 비율
-      try{ await webcam.setup({facingMode}); }
-      catch(e){
-        const id=await getDeviceIdForMode(facingMode);
-        if(!id) throw e;
-        await webcam.setup({deviceId:{exact:id}});
+      // 기존 정리
+      if (animId) cancelAnimationFrame(animId);
+      animId = null;
+      if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
+
+      // 전면은 미러링
+      const flip = (facingMode === "user");
+
+      // ✅ 내부 캔버스 해상도도 정사각형(480×480)
+      webcam = new tmImage.Webcam(480, 480, flip);
+
+      // facingMode 우선, 실패 시 deviceId 백업
+      try{
+        await webcam.setup({ facingMode });
+      }catch(e){
+        const id = await getDeviceIdForMode(facingMode);
+        if (!id) throw e;
+        await webcam.setup({ deviceId: { exact: id } });
       }
+
       await webcam.play();
-      const cont=document.getElementById("webcam-container");
-      cont.innerHTML="";
+
+      const cont = document.getElementById("webcam-container");
+      cont.innerHTML = "";
       cont.appendChild(webcam.canvas);
-      startBtn.disabled=true; stopBtn.disabled=false;
-      labelEl.textContent="Predicting...";
+
+      // 카메라가 실제로 켜진 뒤 Tip 표시
+      cameraHintEl.style.display = "block";
+
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      labelEl.textContent = "Predicting...";
       await requestWakeLock();
       window.requestAnimationFrame(loop);
     }
@@ -227,44 +245,56 @@
       if(!webcam) return;
       webcam.update();
       await predict();
-      animId=window.requestAnimationFrame(loop);
+      animId = window.requestAnimationFrame(loop);
     }
 
     async function predict(){
-      const prediction=await model.predict(webcam.canvas);
-      prediction.forEach((p,i)=>setRow(i,p.probability));
-      const best=prediction.reduce((a,b)=>(a.probability>b.probability?a:b));
-      topBadgeEl.textContent=`Top: ${best.className} ${(best.probability*100).toFixed(1)}%`;
-      const isHit=best.probability>=SUCCESS_THRESHOLD;
-      webcam.canvas.classList.toggle("highlight",isHit);
+      const prediction = await model.predict(webcam.canvas);
+      prediction.forEach((p,i)=> setRow(i, p.probability));
+
+      const best = prediction.reduce((a,b)=> (a.probability > b.probability ? a : b));
+      topBadgeEl.textContent = `Top: ${best.className} ${(best.probability*100).toFixed(1)}%`;
+
+      const isHit = best.probability >= SUCCESS_THRESHOLD;
+      webcam.canvas.classList.toggle("highlight", isHit);
       if(isHit) vibrateOk();
     }
 
     function stopWebcam(){
-      if(animId) cancelAnimationFrame(animId);
-      animId=null;
-      if(webcam){ try{webcam.stop();}catch(e){} webcam=null; }
-      if(wakeLock){ try{wakeLock.release();}catch(e){} wakeLock=null; }
-      startBtn.disabled=false; stopBtn.disabled=true;
-      labelEl.textContent="Camera stopped.";
-      topBadgeEl.textContent="Top: —";
-      const cont=document.getElementById("webcam-container");
+      if (animId) cancelAnimationFrame(animId);
+      animId = null;
+      if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
+      if (wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock = null; }
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      labelEl.textContent = "Camera stopped.";
+      topBadgeEl.textContent = "Top: —";
+      cameraHintEl.style.display = "none";
+
+      const cont = document.getElementById("webcam-container");
       cont.querySelector("canvas")?.classList.remove("highlight");
     }
 
-    startBtn.addEventListener("click",initWebcam);
-    stopBtn.addEventListener("click",stopWebcam);
-    switchCamBtn.addEventListener("click",async()=>{
+    // ===== Events =====
+    startBtn.addEventListener("click", initWebcam);
+    stopBtn.addEventListener("click", stopWebcam);
+    switchCamBtn.addEventListener("click", async ()=>{
       await loadModel();
-      facingMode=(facingMode==="user")?"environment":"user";
-      localStorage.setItem("facingMode",facingMode);
-      labelEl.textContent=`Switching to ${facingMode==="user"?"Front":"Back"} Camera...`;
+      facingMode = (facingMode === "user") ? "environment" : "user";
+      localStorage.setItem("facingMode", facingMode);
+      labelEl.textContent = `Switching to ${facingMode === "user" ? "Front" : "Back"} Camera...`;
       await initWebcam();
     });
 
-    document.addEventListener("visibilitychange",()=>{
-      if(document.visibilityState==="visible"&&webcam&&!animId){window.requestAnimationFrame(loop);}
-      if(document.visibilityState==="visible"&&webcam&&!wakeLock){requestWakeLock();}
+    // iOS에서 탭 복귀 시 루프/웨이크락 복구
+    document.addEventListener("visibilitychange", ()=>{
+      if (document.visibilityState === "visible" && webcam && !animId) {
+        window.requestAnimationFrame(loop);
+      }
+      if (document.visibilityState === "visible" && webcam && !wakeLock) {
+        requestWakeLock();
+      }
     });
   </script>
 </body>
