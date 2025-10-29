@@ -7,6 +7,7 @@
   <style>
     :root{
       --bg:#0b0b0b; --fg:#eaeaea; --muted:#9aa0a6; --accent:#ff4d4f;
+      --success:#22c55e;
       --card:#111; --border:#222;
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --safe-top: env(safe-area-inset-top, 0px);
@@ -27,7 +28,7 @@
     header h1{ margin:0; font-size:17px; font-weight:800; letter-spacing:.2px; }
 
     /* ===== Layout ===== */
-    main{ padding: 10px 12px 120px; } /* 아래 컨트롤 & 줌 슬라이더 높이 고려 여백 */
+    main{ padding: 10px 12px 120px; } /* 하단 컨트롤 여백 */
     .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:12px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
     .stack{ display:flex; flex-direction:column; gap:12px; }
 
@@ -46,6 +47,32 @@
       border-radius:14px;
       background:#000;
       max-height: 75dvh;
+    }
+
+    /* ===== Zoom (moved under camera) ===== */
+    .zoomWrap{
+      margin-top:10px;
+      display:none; /* 지원 기기에서 카메라 켜지면 표시 */
+      align-items:center; gap:10px;
+    }
+    .zoomWrap .zoomLabel{ font-size:12px; color:#bdbdbd; min-width:40px; }
+    .zoomWrap .zoomValue{ font-size:12px; color:#d1d5db; width:52px; text-align:right; font-variant-numeric: tabular-nums; }
+    .zoomWrap input[type="range"]{
+      -webkit-appearance:none; appearance:none;
+      width:100%; height:30px; background:transparent;
+    }
+    .zoomWrap input[type="range"]::-webkit-slider-runnable-track{
+      height:6px; background:#2a2a2a; border-radius:999px;
+    }
+    .zoomWrap input[type="range"]::-webkit-slider-thumb{
+      -webkit-appearance:none; appearance:none;
+      width:18px; height:18px; border-radius:50%; background:#eaeaea; margin-top:-6px; border:1px solid #111;
+    }
+    .zoomWrap input[type="range"]::-moz-range-track{
+      height:6px; background:#2a2a2a; border-radius:999px;
+    }
+    .zoomWrap input[type="range"]::-moz-range-thumb{
+      width:18px; height:18px; border-radius:50%; background:#eaeaea; border:1px solid #111;
     }
 
     /* ===== Status / Prob ===== */
@@ -77,33 +104,10 @@
     .danger{ background:#1e1e1e; border-color:#3a3a3a; }
     .switch{ background:#141414; border-color:#333; }
 
-    /* ===== Zoom Slider ===== */
-    .zoomWrap{
-      margin-top:8px;
-      display:none; /* 지원 기기에서 카메라 켜지면 표시 */
-      align-items:center; gap:10px;
-    }
-    .zoomWrap .zoomLabel{ font-size:12px; color:#bdbdbd; min-width:40px; }
-    .zoomWrap .zoomValue{ font-size:12px; color:#d1d5db; width:52px; text-align:right; font-variant-numeric: tabular-nums; }
-    .zoomWrap input[type="range"]{
-      -webkit-appearance:none; appearance:none;
-      width:100%; height:30px; background:transparent;
-    }
-    .zoomWrap input[type="range"]::-webkit-slider-runnable-track{
-      height:6px; background:#2a2a2a; border-radius:999px;
-    }
-    .zoomWrap input[type="range"]::-webkit-slider-thumb{
-      -webkit-appearance:none; appearance:none;
-      width:18px; height:18px; border-radius:50%; background:#eaeaea; margin-top:-6px; border:1px solid #111;
-    }
-    .zoomWrap input[type="range"]::-moz-range-track{
-      height:6px; background:#2a2a2a; border-radius:999px;
-    }
-    .zoomWrap input[type="range"]::-moz-range-thumb{
-      width:18px; height:18px; border-radius:50%; background:#eaeaea; border:1px solid #111;
-    }
+    /* 하이라이트 & 성공 표시 */
+    .highlight{ outline:2px solid var(--accent); box-shadow:0 0 0 4px rgba(255,77,79,.25); transition: box-shadow 200ms ease, outline-color 200ms ease; }
+    .success{ outline:2px solid var(--success); box-shadow:0 0 0 4px rgba(34,197,94,.25); }
 
-    .highlight{ outline:2px solid var(--accent); box-shadow:0 0 0 4px rgba(255,77,79,.25); transition: box-shadow 200ms ease; }
     footer{ text-align:center; color:#6b7280; padding:8px 0 12px; font-size:11px; }
 
     @media(min-width:900px){
@@ -117,7 +121,7 @@
 <body>
   <header>
     <img src="cdsd_logo.png" alt="CDSD Logo" />
-    <h1>Find Wally with AI - [CDSD x MEC]</h1>
+    <h1>Find Wally — Image Detection [CDSD x MEC]</h1>
   </header>
 
   <main>
@@ -126,6 +130,14 @@
       <section class="card cameraWrap">
         <div class="cameraHint" id="cameraHint">Tip: Fill the frame with only WALLY</div>
         <div id="webcam-container"></div>
+
+        <!-- ✅ 카메라 바로 아래 줌 슬라이더 -->
+        <div id="zoomWrap" class="zoomWrap">
+          <span class="zoomLabel">Zoom</span>
+          <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" />
+          <span class="zoomValue" id="zoomVal">1.0×</span>
+        </div>
+
         <div class="statusLine" style="margin-top:10px;">
           <div class="label" id="label">Waiting for camera...</div>
           <div class="topBadge" id="topBadge">Top: —</div>
@@ -147,14 +159,6 @@
       <button id="stopBtn" class="danger" disabled>Stop</button>
       <button id="switchCamBtn" class="switch">Switch</button>
     </div>
-
-    <!-- Zoom slider (지원 기기에서만 표시) -->
-    <div id="zoomWrap" class="zoomWrap">
-      <span class="zoomLabel">Zoom</span>
-      <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" />
-      <span class="zoomValue" id="zoomVal">1.0×</span>
-    </div>
-
     <div class="label" style="margin-top:6px;">NOTICE: If you allowed camera access, please tap the "Start" button again.</div>
   </div>
 
@@ -174,7 +178,8 @@
     let animId = null;
     let facingMode = localStorage.getItem("facingMode") || "user"; // "user" | "environment"
     let wakeLock = null;
-    let currentTrack = null; // 현재 비디오 트랙(줌 제어용)
+    let currentTrack = null; // 줌 제어용 비디오 트랙
+    let lastBestProb = 0;    // ✅ 마지막 Top 확률 저장
 
     // ===== Elements =====
     const startBtn = document.getElementById("startBtn");
@@ -239,25 +244,24 @@
       return byLabel?.deviceId || cams[0]?.deviceId || null;
     }
 
-    // ===== Zoom Setup / Control =====
+    // ===== Zoom =====
     function hideZoom(){
       zoomWrapEl.style.display = "none";
       zoomEl.value = "1";
       zoomValEl.textContent = "1.0×";
     }
-
     function setupZoom(track){
       try{
         const caps = track.getCapabilities?.();
         if (!caps || !caps.zoom){
-          hideZoom(); // 지원 안하면 숨김
+          hideZoom(); // 미지원 시 숨김
           return;
         }
         const settings = track.getSettings?.() || {};
         const min = caps.zoom.min ?? 1;
         const max = caps.zoom.max ?? Math.max(1.0, (settings.zoom || 1) + 1);
         const step = caps.zoom.step ?? 0.1;
-        const val = settings.zoom ?? min;
+        const val = settings.zoom ?? Math.max(min, 1);
 
         zoomEl.min = String(min);
         zoomEl.max = String(max);
@@ -271,9 +275,7 @@
           zoomValEl.textContent = `${z.toFixed(1)}×`;
           try{
             await track.applyConstraints({ advanced: [{ zoom: z }] });
-          }catch(e){
-            // 일부 기기에서 중간값 안 먹을 수 있음
-          }
+          }catch(e){ /* 중간값 제한 등으로 실패 가능 */ }
         };
       }catch(e){
         hideZoom();
@@ -289,6 +291,7 @@
       if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
       currentTrack = null;
       hideZoom();
+      lastBestProb = 0; // 초기화
 
       const flip = (facingMode === "user");
       webcam = new tmImage.Webcam(480, 480, flip); // 내부 캔버스 정사각형
@@ -304,14 +307,13 @@
 
       await webcam.play();
 
-      // 내부 비디오 트랙 확보하여 줌 구성
+      // 비디오 트랙 확보 → 줌 구성
       try{
-        const video = webcam.webcam; // tmImage.Webcam 내부의 <video>
+        const video = webcam.webcam;
         const stream = video?.srcObject;
         currentTrack = stream?.getVideoTracks?.()[0] || null;
         if (currentTrack) setupZoom(currentTrack);
       }catch(e){
-        // 트랙 접근 실패 시 줌 감춤
         hideZoom();
       }
 
@@ -319,7 +321,7 @@
       cont.innerHTML = "";
       cont.appendChild(webcam.canvas);
 
-      // 카메라가 실제로 켜진 뒤 Tip 표시
+      // 카메라 켜진 뒤 Tip 표시
       cameraHintEl.style.display = "block";
 
       startBtn.disabled = true;
@@ -341,28 +343,40 @@
       prediction.forEach((p,i)=> setRow(i, p.probability));
 
       const best = prediction.reduce((a,b)=> (a.probability > b.probability ? a : b));
+      lastBestProb = best.probability; // ✅ 최신 Top 확률 저장
       topBadgeEl.textContent = `Top: ${best.className} ${(best.probability*100).toFixed(1)}%`;
 
       const isHit = best.probability >= SUCCESS_THRESHOLD;
-      webcam.canvas.classList.toggle("highlight", isHit);
-      if(isHit) vibrateOk();
+      webcam.canvas.classList.toggle("highlight", isHit); // 진행 중엔 빨간 하이라이트
+      // success는 Stop 시에만 적용
     }
 
     function stopWebcam(){
       if (animId) cancelAnimationFrame(animId);
       animId = null;
+
+      // ✅ 정지 시 성공 여부 반영: 초록 테두리로 전환
+      if (webcam?.canvas) {
+        webcam.canvas.classList.remove("highlight");
+        if (lastBestProb >= SUCCESS_THRESHOLD) {
+          webcam.canvas.classList.add("success");
+          // 성공 진동 한번 더(선택)
+          vibrateOk();
+        } else {
+          webcam.canvas.classList.remove("success");
+        }
+      }
+
       if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
       if (wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock = null; }
 
       startBtn.disabled = false;
       stopBtn.disabled = true;
       labelEl.textContent = "Camera stopped.";
-      topBadgeEl.textContent = "Top: —";
+      // topBadge 유지하거나 초기화 원하면 아래 라인 주석 해제
+      // topBadgeEl.textContent = "Top: —";
       cameraHintEl.style.display = "none";
       hideZoom();
-
-      const cont = document.getElementById("webcam-container");
-      cont.querySelector("canvas")?.classList.remove("highlight");
     }
 
     // ===== Events =====
@@ -376,7 +390,7 @@
       await initWebcam();
     });
 
-    // iOS에서 탭 복귀 시 루프/웨이크락 복구
+    // 탭 복귀 시 루프/웨이크락 복구
     document.addEventListener("visibilitychange", ()=>{
       if (document.visibilityState === "visible" && webcam && !animId) {
         window.requestAnimationFrame(loop);
