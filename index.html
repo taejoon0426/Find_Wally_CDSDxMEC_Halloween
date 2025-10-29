@@ -27,7 +27,7 @@
     header h1{ margin:0; font-size:17px; font-weight:800; letter-spacing:.2px; }
 
     /* ===== Layout ===== */
-    main{ padding: 10px 12px 96px; }
+    main{ padding: 10px 12px 120px; } /* 아래 컨트롤 & 줌 슬라이더 높이 고려 여백 */
     .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:12px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
     .stack{ display:flex; flex-direction:column; gap:12px; }
 
@@ -42,7 +42,7 @@
     }
     canvas{
       width:100%;
-      aspect-ratio: 1 / 1;   /* ✅ 정사각형 비율 */
+      aspect-ratio: 1 / 1;   /* 정사각형 비율 */
       border-radius:14px;
       background:#000;
       max-height: 75dvh;
@@ -77,6 +77,32 @@
     .danger{ background:#1e1e1e; border-color:#3a3a3a; }
     .switch{ background:#141414; border-color:#333; }
 
+    /* ===== Zoom Slider ===== */
+    .zoomWrap{
+      margin-top:8px;
+      display:none; /* 지원 기기에서 카메라 켜지면 표시 */
+      align-items:center; gap:10px;
+    }
+    .zoomWrap .zoomLabel{ font-size:12px; color:#bdbdbd; min-width:40px; }
+    .zoomWrap .zoomValue{ font-size:12px; color:#d1d5db; width:52px; text-align:right; font-variant-numeric: tabular-nums; }
+    .zoomWrap input[type="range"]{
+      -webkit-appearance:none; appearance:none;
+      width:100%; height:30px; background:transparent;
+    }
+    .zoomWrap input[type="range"]::-webkit-slider-runnable-track{
+      height:6px; background:#2a2a2a; border-radius:999px;
+    }
+    .zoomWrap input[type="range"]::-webkit-slider-thumb{
+      -webkit-appearance:none; appearance:none;
+      width:18px; height:18px; border-radius:50%; background:#eaeaea; margin-top:-6px; border:1px solid #111;
+    }
+    .zoomWrap input[type="range"]::-moz-range-track{
+      height:6px; background:#2a2a2a; border-radius:999px;
+    }
+    .zoomWrap input[type="range"]::-moz-range-thumb{
+      width:18px; height:18px; border-radius:50%; background:#eaeaea; border:1px solid #111;
+    }
+
     .highlight{ outline:2px solid var(--accent); box-shadow:0 0 0 4px rgba(255,77,79,.25); transition: box-shadow 200ms ease; }
     footer{ text-align:center; color:#6b7280; padding:8px 0 12px; font-size:11px; }
 
@@ -84,7 +110,7 @@
       main{ max-width:980px; margin:0 auto; }
       .stack{ flex-direction:row; }
       .stack>.card{ flex:1; }
-      canvas{ aspect-ratio: 1 / 1; max-height: 65dvh; } /* 데스크톱에서도 정사각형 유지 */
+      canvas{ aspect-ratio: 1 / 1; max-height: 65dvh; }
     }
   </style>
 </head>
@@ -121,6 +147,14 @@
       <button id="stopBtn" class="danger" disabled>Stop</button>
       <button id="switchCamBtn" class="switch">Switch</button>
     </div>
+
+    <!-- Zoom slider (지원 기기에서만 표시) -->
+    <div id="zoomWrap" class="zoomWrap">
+      <span class="zoomLabel">Zoom</span>
+      <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" />
+      <span class="zoomValue" id="zoomVal">1.0×</span>
+    </div>
+
     <div class="label" style="margin-top:6px;">NOTICE: If you allowed camera access, please tap the "Start" button again.</div>
   </div>
 
@@ -140,6 +174,7 @@
     let animId = null;
     let facingMode = localStorage.getItem("facingMode") || "user"; // "user" | "environment"
     let wakeLock = null;
+    let currentTrack = null; // 현재 비디오 트랙(줌 제어용)
 
     // ===== Elements =====
     const startBtn = document.getElementById("startBtn");
@@ -149,6 +184,9 @@
     const labelEl = document.getElementById("label");
     const topBadgeEl = document.getElementById("topBadge");
     const cameraHintEl = document.getElementById("cameraHint");
+    const zoomWrapEl = document.getElementById("zoomWrap");
+    const zoomEl = document.getElementById("zoom");
+    const zoomValEl = document.getElementById("zoomVal");
 
     // ===== Model =====
     async function loadModel(){
@@ -201,20 +239,59 @@
       return byLabel?.deviceId || cams[0]?.deviceId || null;
     }
 
+    // ===== Zoom Setup / Control =====
+    function hideZoom(){
+      zoomWrapEl.style.display = "none";
+      zoomEl.value = "1";
+      zoomValEl.textContent = "1.0×";
+    }
+
+    function setupZoom(track){
+      try{
+        const caps = track.getCapabilities?.();
+        if (!caps || !caps.zoom){
+          hideZoom(); // 지원 안하면 숨김
+          return;
+        }
+        const settings = track.getSettings?.() || {};
+        const min = caps.zoom.min ?? 1;
+        const max = caps.zoom.max ?? Math.max(1.0, (settings.zoom || 1) + 1);
+        const step = caps.zoom.step ?? 0.1;
+        const val = settings.zoom ?? min;
+
+        zoomEl.min = String(min);
+        zoomEl.max = String(max);
+        zoomEl.step = String(step);
+        zoomEl.value = String(val);
+        zoomValEl.textContent = `${Number(zoomEl.value).toFixed(1)}×`;
+        zoomWrapEl.style.display = "flex";
+
+        zoomEl.oninput = async () => {
+          const z = parseFloat(zoomEl.value);
+          zoomValEl.textContent = `${z.toFixed(1)}×`;
+          try{
+            await track.applyConstraints({ advanced: [{ zoom: z }] });
+          }catch(e){
+            // 일부 기기에서 중간값 안 먹을 수 있음
+          }
+        };
+      }catch(e){
+        hideZoom();
+      }
+    }
+
     // ===== Webcam =====
     async function initWebcam(){
       await loadModel();
 
-      // 기존 정리
       if (animId) cancelAnimationFrame(animId);
       animId = null;
       if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
+      currentTrack = null;
+      hideZoom();
 
-      // 전면은 미러링
       const flip = (facingMode === "user");
-
-      // ✅ 내부 캔버스 해상도도 정사각형(480×480)
-      webcam = new tmImage.Webcam(480, 480, flip);
+      webcam = new tmImage.Webcam(480, 480, flip); // 내부 캔버스 정사각형
 
       // facingMode 우선, 실패 시 deviceId 백업
       try{
@@ -226,6 +303,17 @@
       }
 
       await webcam.play();
+
+      // 내부 비디오 트랙 확보하여 줌 구성
+      try{
+        const video = webcam.webcam; // tmImage.Webcam 내부의 <video>
+        const stream = video?.srcObject;
+        currentTrack = stream?.getVideoTracks?.()[0] || null;
+        if (currentTrack) setupZoom(currentTrack);
+      }catch(e){
+        // 트랙 접근 실패 시 줌 감춤
+        hideZoom();
+      }
 
       const cont = document.getElementById("webcam-container");
       cont.innerHTML = "";
@@ -271,6 +359,7 @@
       labelEl.textContent = "Camera stopped.";
       topBadgeEl.textContent = "Top: —";
       cameraHintEl.style.display = "none";
+      hideZoom();
 
       const cont = document.getElementById("webcam-container");
       cont.querySelector("canvas")?.classList.remove("highlight");
