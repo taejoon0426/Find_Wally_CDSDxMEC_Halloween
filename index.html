@@ -6,8 +6,9 @@
   <title>Find Wally with AI - [CDSD x MEC]</title>
   <style>
     :root{
-      --bg:#0b0b0b; --fg:#eaeaea; --muted:#9aa0a6; --accent:#ff4d4f;
-      --success:#22c55e;
+      --bg:#0b0b0b; --fg:#eaeaea; --muted:#9aa0a6;
+      --accent:#ff4d4f; /* red */
+      --success:#22c55e; /* green */
       --card:#111; --border:#222;
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --safe-top: env(safe-area-inset-top, 0px);
@@ -28,7 +29,7 @@
     header h1{ margin:0; font-size:17px; font-weight:800; letter-spacing:.2px; }
 
     /* ===== Layout ===== */
-    main{ padding: 10px 12px 120px; } /* 하단 컨트롤 여백 */
+    main{ padding: 10px 12px 120px; }
     .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:12px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
     .stack{ display:flex; flex-direction:column; gap:12px; }
 
@@ -39,20 +40,24 @@
       background:rgba(0,0,0,.55);
       padding:6px 10px; border-radius:999px;
       font-size:12px; color:#e5e7eb; border:1px solid #000;
-      display:none; /* 카메라 켜진 뒤에만 보이게 */
+      display:none;
     }
     canvas{
       width:100%;
-      aspect-ratio: 1 / 1;   /* 정사각형 비율 */
+      aspect-ratio: 1 / 1;
       border-radius:14px;
       background:#000;
       max-height: 75dvh;
+      border: 3px solid #fff; /* ✅ 기본 흰색 */
+      transition: border-color 160ms ease;
     }
+    .success{ border-color: var(--success) !important; } /* ✅ 초록 */
+    .fail{ border-color: var(--accent) !important; }     /* ❌ 빨강 */
 
-    /* ===== Zoom (moved under camera) ===== */
+    /* ===== Zoom ===== */
     .zoomWrap{
       margin-top:10px;
-      display:none; /* 지원 기기에서 카메라 켜지면 표시 */
+      display:none;
       align-items:center; gap:10px;
     }
     .zoomWrap .zoomLabel{ font-size:12px; color:#bdbdbd; min-width:40px; }
@@ -67,12 +72,6 @@
     .zoomWrap input[type="range"]::-webkit-slider-thumb{
       -webkit-appearance:none; appearance:none;
       width:18px; height:18px; border-radius:50%; background:#eaeaea; margin-top:-6px; border:1px solid #111;
-    }
-    .zoomWrap input[type="range"]::-moz-range-track{
-      height:6px; background:#2a2a2a; border-radius:999px;
-    }
-    .zoomWrap input[type="range"]::-moz-range-thumb{
-      width:18px; height:18px; border-radius:50%; background:#eaeaea; border:1px solid #111;
     }
 
     /* ===== Status / Prob ===== */
@@ -104,18 +103,7 @@
     .danger{ background:#1e1e1e; border-color:#3a3a3a; }
     .switch{ background:#141414; border-color:#333; }
 
-    /* 하이라이트 & 성공 표시 */
-    .highlight{ outline:2px solid var(--accent); box-shadow:0 0 0 4px rgba(255,77,79,.25); transition: box-shadow 200ms ease, outline-color 200ms ease; }
-    .success{ outline:2px solid var(--success); box-shadow:0 0 0 4px rgba(34,197,94,.25); }
-
     footer{ text-align:center; color:#6b7280; padding:8px 0 12px; font-size:11px; }
-
-    @media(min-width:900px){
-      main{ max-width:980px; margin:0 auto; }
-      .stack{ flex-direction:row; }
-      .stack>.card{ flex:1; }
-      canvas{ aspect-ratio: 1 / 1; max-height: 65dvh; }
-    }
   </style>
 </head>
 <body>
@@ -126,12 +114,10 @@
 
   <main>
     <div class="stack">
-      <!-- 카메라 카드 -->
       <section class="card cameraWrap">
         <div class="cameraHint" id="cameraHint">Tip: Fill the frame with only WALLY</div>
         <div id="webcam-container"></div>
 
-        <!-- ✅ 카메라 바로 아래 줌 슬라이더 -->
         <div id="zoomWrap" class="zoomWrap">
           <span class="zoomLabel">Zoom</span>
           <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" />
@@ -144,7 +130,6 @@
         </div>
       </section>
 
-      <!-- 확률 카드 -->
       <section class="card">
         <h2 style="margin:0 0 10px 0; font-size:15px;">Live Probabilities</h2>
         <div class="probs" id="probs"></div>
@@ -152,7 +137,6 @@
     </div>
   </main>
 
-  <!-- 하단 고정 컨트롤 -->
   <div class="controls">
     <div class="controlsInner">
       <button id="startBtn" class="accent">Start</button>
@@ -169,19 +153,16 @@
   <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.4/dist/teachablemachine-image.min.js"></script>
 
   <script>
-    // ===== Config =====
     const MODEL_URL = "./model/";
     const SUCCESS_THRESHOLD = 0.8; // 80%
 
-    // ===== State =====
     let model, webcam, maxPredictions, labels = [];
     let animId = null;
-    let facingMode = localStorage.getItem("facingMode") || "user"; // "user" | "environment"
+    let facingMode = localStorage.getItem("facingMode") || "user";
     let wakeLock = null;
-    let currentTrack = null; // 줌 제어용 비디오 트랙
-    let lastBestProb = 0;    // ✅ 마지막 Top 확률 저장
+    let currentTrack = null;
+    let lastBest = { className:"", probability:0 };
 
-    // ===== Elements =====
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const switchCamBtn = document.getElementById("switchCamBtn");
@@ -193,212 +174,95 @@
     const zoomEl = document.getElementById("zoom");
     const zoomValEl = document.getElementById("zoomVal");
 
-    // ===== Model =====
     async function loadModel(){
       if(model) return;
-      model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+      model = await tmImage.load(MODEL_URL+"model.json", MODEL_URL+"metadata.json");
       maxPredictions = model.getTotalClasses();
       labels = model.getClassLabels();
-      renderRows(labels);
-    }
-
-    // ===== UI: Prob Rows =====
-    function renderRows(names){
-      probsEl.innerHTML = "";
-      for(const n of names){
-        const row = document.createElement("div");
-        row.className = "row";
-        row.innerHTML = `
+      probsEl.innerHTML = labels.map(n=>`
+        <div class="row">
           <div class="name">${n}</div>
           <div class="bar"><div></div></div>
-          <div class="pct">0.00%</div>`;
-        probsEl.appendChild(row);
-      }
+          <div class="pct">0.00%</div>
+        </div>`).join("");
     }
-    function setRow(idx, p){
-      const row = probsEl.children[idx];
-      if(!row) return;
-      const bar = row.querySelector(".bar > div");
-      const pct = row.querySelector(".pct");
-      const w = Math.round(p * 10000) / 100;
-      bar.style.width = w + "%";
-      pct.textContent = w.toFixed(2) + "%";
+    function setRow(i,p){
+      const row = probsEl.children[i]; if(!row) return;
+      row.querySelector(".bar>div").style.width = (p*100)+"%";
+      row.querySelector(".pct").textContent = (p*100).toFixed(2)+"%";
     }
 
-    // ===== Helpers =====
-    function vibrateOk(){ if("vibrate" in navigator) navigator.vibrate?.(30); }
-    async function requestWakeLock(){
-      try{
-        if("wakeLock" in navigator){
-          wakeLock = await navigator.wakeLock.request("screen");
-          wakeLock.addEventListener?.("release", ()=>{ wakeLock = null; });
-        }
-      }catch(e){}
-    }
-    async function getDeviceIdForMode(target="environment"){
-      try{ await navigator.mediaDevices.getUserMedia({ video:true }); }catch{}
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter(d => d.kind === "videoinput");
-      const keywords = target === "environment" ? [/back/i,/rear/i,/environment/i] : [/front/i,/user/i,/face/i];
-      const byLabel = cams.find(c => keywords.some(rx => rx.test(c.label)));
-      return byLabel?.deviceId || cams[0]?.deviceId || null;
-    }
-
-    // ===== Zoom =====
-    function hideZoom(){
-      zoomWrapEl.style.display = "none";
-      zoomEl.value = "1";
-      zoomValEl.textContent = "1.0×";
-    }
+    function hideZoom(){ zoomWrapEl.style.display="none"; }
     function setupZoom(track){
-      try{
-        const caps = track.getCapabilities?.();
-        if (!caps || !caps.zoom){
-          hideZoom(); // 미지원 시 숨김
-          return;
-        }
-        const settings = track.getSettings?.() || {};
-        const min = caps.zoom.min ?? 1;
-        const max = caps.zoom.max ?? Math.max(1.0, (settings.zoom || 1) + 1);
-        const step = caps.zoom.step ?? 0.1;
-        const val = settings.zoom ?? Math.max(min, 1);
-
-        zoomEl.min = String(min);
-        zoomEl.max = String(max);
-        zoomEl.step = String(step);
-        zoomEl.value = String(val);
-        zoomValEl.textContent = `${Number(zoomEl.value).toFixed(1)}×`;
-        zoomWrapEl.style.display = "flex";
-
-        zoomEl.oninput = async () => {
-          const z = parseFloat(zoomEl.value);
-          zoomValEl.textContent = `${z.toFixed(1)}×`;
-          try{
-            await track.applyConstraints({ advanced: [{ zoom: z }] });
-          }catch(e){ /* 중간값 제한 등으로 실패 가능 */ }
-        };
-      }catch(e){
-        hideZoom();
-      }
+      const caps = track.getCapabilities?.();
+      if(!caps||!caps.zoom){ hideZoom(); return; }
+      const min=caps.zoom.min, max=caps.zoom.max, step=caps.zoom.step||0.1;
+      zoomEl.min=min; zoomEl.max=max; zoomEl.step=step;
+      zoomWrapEl.style.display="flex";
+      zoomEl.oninput=async()=>{
+        zoomValEl.textContent=Number(zoomEl.value).toFixed(1)+"×";
+        try{ await track.applyConstraints({advanced:[{zoom:parseFloat(zoomEl.value)}]}); }catch{}
+      };
     }
 
-    // ===== Webcam =====
     async function initWebcam(){
       await loadModel();
+      if(animId) cancelAnimationFrame(animId);
+      animId=null;
+      if(webcam){ try{webcam.stop();}catch{} webcam=null; }
 
-      if (animId) cancelAnimationFrame(animId);
-      animId = null;
-      if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
-      currentTrack = null;
-      hideZoom();
-      lastBestProb = 0; // 초기화
-
-      const flip = (facingMode === "user");
-      webcam = new tmImage.Webcam(480, 480, flip); // 내부 캔버스 정사각형
-
-      // facingMode 우선, 실패 시 deviceId 백업
-      try{
-        await webcam.setup({ facingMode });
-      }catch(e){
-        const id = await getDeviceIdForMode(facingMode);
-        if (!id) throw e;
-        await webcam.setup({ deviceId: { exact: id } });
-      }
-
+      const flip=(facingMode==="user");
+      webcam=new tmImage.Webcam(480,480,flip);
+      await webcam.setup({facingMode});
       await webcam.play();
 
-      // 비디오 트랙 확보 → 줌 구성
-      try{
-        const video = webcam.webcam;
-        const stream = video?.srcObject;
-        currentTrack = stream?.getVideoTracks?.()[0] || null;
-        if (currentTrack) setupZoom(currentTrack);
-      }catch(e){
-        hideZoom();
-      }
+      const cont=document.getElementById("webcam-container");
+      cont.innerHTML=""; cont.appendChild(webcam.canvas);
+      webcam.canvas.classList.remove("success","fail");
+      cameraHintEl.style.display="block";
 
-      const cont = document.getElementById("webcam-container");
-      cont.innerHTML = "";
-      cont.appendChild(webcam.canvas);
+      const video=webcam.webcam;
+      currentTrack=video.srcObject.getVideoTracks()[0];
+      setupZoom(currentTrack);
 
-      // 카메라 켜진 뒤 Tip 표시
-      cameraHintEl.style.display = "block";
-
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      labelEl.textContent = "Predicting...";
-      await requestWakeLock();
+      startBtn.disabled=true; stopBtn.disabled=false;
+      labelEl.textContent="Predicting...";
       window.requestAnimationFrame(loop);
     }
 
     async function loop(){
       if(!webcam) return;
       webcam.update();
-      await predict();
-      animId = window.requestAnimationFrame(loop);
-    }
-
-    async function predict(){
-      const prediction = await model.predict(webcam.canvas);
-      prediction.forEach((p,i)=> setRow(i, p.probability));
-
-      const best = prediction.reduce((a,b)=> (a.probability > b.probability ? a : b));
-      lastBestProb = best.probability; // ✅ 최신 Top 확률 저장
-      topBadgeEl.textContent = `Top: ${best.className} ${(best.probability*100).toFixed(1)}%`;
-
-      const isHit = best.probability >= SUCCESS_THRESHOLD;
-      webcam.canvas.classList.toggle("highlight", isHit); // 진행 중엔 빨간 하이라이트
-      // success는 Stop 시에만 적용
+      const pred=await model.predict(webcam.canvas);
+      pred.forEach((p,i)=>setRow(i,p.probability));
+      lastBest=pred.reduce((a,b)=>a.probability>b.probability?a:b);
+      topBadgeEl.textContent=`Top: ${lastBest.className} ${(lastBest.probability*100).toFixed(1)}%`;
+      animId=requestAnimationFrame(loop);
     }
 
     function stopWebcam(){
-      if (animId) cancelAnimationFrame(animId);
-      animId = null;
-
-      // ✅ 정지 시 성공 여부 반영: 초록 테두리로 전환
-      if (webcam?.canvas) {
-        webcam.canvas.classList.remove("highlight");
-        if (lastBestProb >= SUCCESS_THRESHOLD) {
-          webcam.canvas.classList.add("success");
-          // 성공 진동 한번 더(선택)
-          vibrateOk();
-        } else {
-          webcam.canvas.classList.remove("success");
+      if(animId) cancelAnimationFrame(animId);
+      animId=null;
+      if(webcam?.canvas){
+        webcam.canvas.classList.remove("success","fail");
+        if(lastBest.className==="Wally" && lastBest.probability>=SUCCESS_THRESHOLD){
+          webcam.canvas.classList.add("success"); // ✅ 초록
+        }else{
+          webcam.canvas.classList.add("fail"); // ❌ 빨강
         }
       }
-
-      if (webcam) { try { webcam.stop(); } catch(e){} webcam = null; }
-      if (wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock = null; }
-
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      labelEl.textContent = "Camera stopped.";
-      // topBadge 유지하거나 초기화 원하면 아래 라인 주석 해제
-      // topBadgeEl.textContent = "Top: —";
-      cameraHintEl.style.display = "none";
-      hideZoom();
+      if(webcam){ try{webcam.stop();}catch{} webcam=null; }
+      startBtn.disabled=false; stopBtn.disabled=true;
+      labelEl.textContent="Camera stopped.";
+      cameraHintEl.style.display="none";
     }
 
-    // ===== Events =====
-    startBtn.addEventListener("click", initWebcam);
-    stopBtn.addEventListener("click", stopWebcam);
-    switchCamBtn.addEventListener("click", async ()=>{
-      await loadModel();
-      facingMode = (facingMode === "user") ? "environment" : "user";
-      localStorage.setItem("facingMode", facingMode);
-      labelEl.textContent = `Switching to ${facingMode === "user" ? "Front" : "Back"} Camera...`;
+    startBtn.onclick=initWebcam;
+    stopBtn.onclick=stopWebcam;
+    switchCamBtn.onclick=async()=>{
+      facingMode=(facingMode==="user")?"environment":"user";
       await initWebcam();
-    });
-
-    // 탭 복귀 시 루프/웨이크락 복구
-    document.addEventListener("visibilitychange", ()=>{
-      if (document.visibilityState === "visible" && webcam && !animId) {
-        window.requestAnimationFrame(loop);
-      }
-      if (document.visibilityState === "visible" && webcam && !wakeLock) {
-        requestWakeLock();
-      }
-    });
+    };
   </script>
 </body>
 </html>
