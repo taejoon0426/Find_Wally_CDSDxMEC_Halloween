@@ -39,7 +39,7 @@
       position:absolute; left:12px; top:12px;
       background:rgba(0,0,0,.55);
       padding:6px 10px; border-radius:999px;
-      font-size:12px; color:#e5e7eb; border:1px solid #000;
+      font-size:12px; color:#eae9eb; border:1px solid #000;
       display:none;
     }
     canvas{
@@ -104,6 +104,17 @@
     .switch{ background:#141414; border-color:#333; }
 
     footer{ text-align:center; color:#6b7280; padding:8px 0 12px; font-size:11px; }
+
+    /* === Result message overlay (추가) === */
+    .resultMsg{
+      position:absolute; inset:0;
+      display:flex; justify-content:center; align-items:center;
+      background:rgba(0,0,0,.45); backdrop-filter:blur(4px);
+      font-size:22px; font-weight:800; color:#eaeaea;
+      border-radius:14px; opacity:0; pointer-events:none;
+      transition:opacity .25s ease;
+    }
+    .resultMsg.show{ opacity:1; }
   </style>
 </head>
 <body>
@@ -117,6 +128,9 @@
       <section class="card cameraWrap">
         <div class="cameraHint" id="cameraHint">Tip: Fill the frame with only WALLY</div>
         <div id="webcam-container"></div>
+
+        <!-- ✅ 결과 메시지 오버레이 (추가) -->
+        <div id="resultMsg" class="resultMsg"></div>
 
         <div id="zoomWrap" class="zoomWrap">
           <span class="zoomLabel">Zoom</span>
@@ -173,6 +187,7 @@
     const zoomWrapEl = document.getElementById("zoomWrap");
     const zoomEl = document.getElementById("zoom");
     const zoomValEl = document.getElementById("zoomVal");
+    const resultMsgEl = document.getElementById("resultMsg"); // ✅ 추가
 
     async function loadModel(){
       if(model) return;
@@ -240,6 +255,15 @@
       animId=requestAnimationFrame(loop);
     }
 
+    // ✅ 결과 메시지 표시 함수 (추가)
+    function showResultMessage(text, color){
+      if(!resultMsgEl) return;
+      resultMsgEl.textContent = text;
+      resultMsgEl.style.color = color;
+      resultMsgEl.classList.add("show");
+      setTimeout(()=> resultMsgEl.classList.remove("show"), 2000); // 2초 후 자동 숨김
+    }
+
     function stopWebcam(){
       if(animId) cancelAnimationFrame(animId);
       animId=null;
@@ -247,8 +271,10 @@
         webcam.canvas.classList.remove("success","fail");
         if(lastBest.className==="Wally" && lastBest.probability>=SUCCESS_THRESHOLD){
           webcam.canvas.classList.add("success"); // ✅ 초록
+          showResultMessage("🎉 Found Wally 🎉", "#22c55e"); // ✅ 메시지
         }else{
           webcam.canvas.classList.add("fail"); // ❌ 빨강
+          showResultMessage("😭 Try again 😭", "#ff4d4f");   // ✅ 메시지
         }
       }
       if(webcam){ try{webcam.stop();}catch{} webcam=null; }
